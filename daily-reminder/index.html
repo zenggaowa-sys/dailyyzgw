@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="事日清">
+  <meta name="theme-color" content="#F5F6FA">
+  <link rel="apple-touch-icon" href="public/icons/icon-512.png">
+  <link rel="manifest" href="manifest.json">
+  <title>事日清</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .browser-warning{display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:#F5F6FA;z-index:99999;justify-content:center;align-items:center;text-align:center;padding:40px 24px;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI","Microsoft YaHei",sans-serif}
+    .browser-warning .bw-box{max-width:360px}
+    .browser-warning .bw-icon{font-size:64px;margin-bottom:20px}
+    .browser-warning .bw-title{font-size:22px;font-weight:700;color:#1A1D26;margin-bottom:10px}
+    .browser-warning .bw-desc{font-size:14px;color:#5B6178;line-height:1.8;margin-bottom:24px}
+    .browser-warning .bw-btn{display:inline-block;padding:12px 32px;background:#6366F1;color:#fff;border-radius:12px;text-decoration:none;font-size:14px;font-weight:600}
+  </style>
+  <!--[if IE]>
+  <style>.browser-warning{display:flex!important}#app{display:none!important}</style>
+  <![endif]-->
+</head>
+<body>
+  <div class="browser-warning" id="browserWarning">
+    <div class="bw-box">
+      <div class="bw-icon">😅</div>
+      <div class="bw-title">浏览器版本太低了</div>
+      <div class="bw-desc">事日清需要使用现代浏览器才能正常运行。<br>请使用 Chrome、Safari、Edge、Firefox 或微信内打开此链接。</div>
+      <a class="bw-btn" href="https://www.google.cn/chrome/">下载 Chrome 浏览器</a>
+    </div>
+  </div>
+  <div id="app"></div>
+  <script>
+    // 检测浏览器是否支持必要的 API
+    (function(){
+      var isModern = typeof Promise !== 'undefined' 
+        && typeof Symbol !== 'undefined' 
+        && typeof window.CSS !== 'undefined'
+        && CSS.supports && CSS.supports('--a','0');
+      if(!isModern){
+        document.getElementById('browserWarning').style.display = 'flex';
+        var appEl = document.getElementById('app');
+        if(appEl) appEl.style.display = 'none';
+      }
+    })();
+  </script>
+  <script src="app.js"></script>
+</body>
+</html>
