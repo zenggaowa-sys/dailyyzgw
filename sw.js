@@ -3,12 +3,13 @@
 // 提供完全离线支持
 // ============================================
 
-const CACHE_NAME = 'daily-reminder-v3';
+const CACHE_NAME = 'daily-reminder-v11';
 const ASSETS = [
   'index.html',
   'styles.css',
   'app.js',
   'manifest.json',
+  'public/icons/icon-192.png',
   'public/icons/icon-512.png',
 ];
 

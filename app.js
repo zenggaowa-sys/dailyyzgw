@@ -14,7 +14,8 @@ const IC={
   chart:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
   habit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
   note:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
-  fire:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2c.5 2.5 2 4.5 2 8a6 6 0 1 1-8-5.6c0 4 2 5 3 6 .5-2 1.5-3.5 3-8.4z"/></svg>'
+  fire:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2c.5 2.5 2 4.5 2 8a6 6 0 1 1-8-5.6c0 4 2 5 3 6 .5-2 1.5-3.5 3-8.4z"/></svg>',
+  chevDown:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>'
 };
 
 const COLORS=[
@@ -121,6 +122,26 @@ class DB{
   async getAll(s){return new Promise((res,rej)=>{const t=this.db.transaction(s,'readonly');const r=t.objectStore(s).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
   async put(s,d){return new Promise((res,rej)=>{const t=this.db.transaction(s,'readwrite');const r=t.objectStore(s).put(d);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
   async delete(s,id){return new Promise((res,rej)=>{const t=this.db.transaction(s,'readwrite');const r=t.objectStore(s).delete(id);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)})}
+  async exportAll(){
+    const stores=['events','categories','habits','habitLogs','notes','noteCategories','achievements'];
+    const data={_meta:{app:'DailyReminder',version:this.ver,exportedAt:new Date().toISOString()}};
+    for(const s of stores){data[s]=await this.getAll(s)}
+    return data;
+  }
+  async importAll(data){
+    const stores=['events','categories','habits','habitLogs','notes','noteCategories','achievements'];
+    for(const s of stores){
+      if(!data[s]||!Array.isArray(data[s]))continue;
+      const t=this.db.transaction(s,'readwrite');
+      const store=t.objectStore(s);
+      // Clear existing data
+      await new Promise((res,rej)=>{const r=store.clear();r.onsuccess=()=>res();r.onerror=()=>rej(r.error)});
+      // Import new data
+      for(const item of data[s]){
+        await new Promise((res,rej)=>{const r=store.put(item);r.onsuccess=()=>res();r.onerror=()=>rej(r.error)});
+      }
+    }
+  }
 }
 
 // ========== Reminder Engine ==========
@@ -314,6 +335,8 @@ class App{
     this.tab='home';
     this.activeCat='all';
     this.query='';
+    this.habitCollapsed=false;
+    this.collapsedDates=new Set();
     this.parser=null;
   }
 
@@ -420,6 +443,76 @@ class App{
     this.render();
   }
 
+  // ===== Data Backup & Restore =====
+  async exportData(){
+    try{
+      const data=await this.db.exportAll();
+      const json=JSON.stringify(data,null,2);
+      const blob=new Blob([json],{type:'application/json'});
+      const url=URL.createObjectURL(blob);
+      const a=document.createElement('a');
+      const now=new Date();
+      const fname='shiriqing_backup_'+now.getFullYear()+p2(now.getMonth()+1)+p2(now.getDate())+'_'+p2(now.getHours())+p2(now.getMinutes())+'.json';
+      a.href=url;a.download=fname;
+      document.body.appendChild(a);a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      this.toast('备份成功！文件已下载');
+    }catch(e){
+      console.error('Export failed:',e);
+      this.toast('备份失败，请重试');
+    }
+  }
+
+  importData(){
+    const input=document.createElement('input');
+    input.type='file';input.accept='.json';
+    input.onchange=async(e)=>{
+      const file=e.target.files[0];
+      if(!file)return;
+      try{
+        const text=await file.text();
+        const data=JSON.parse(text);
+        if(!data._meta||data._meta.app!=='DailyReminder'){
+          this.toast('文件格式不正确');return;
+        }
+        // Show confirmation
+        const totalItems=(data.events||[]).length+(data.habits||[]).length+(data.notes||[]).length+(data.habitLogs||[]).length;
+        const o=document.createElement('div');
+        o.className='cfm-ov active';
+        o.innerHTML=`<div class="cfm-dlg">
+          <h3>恢复数据</h3>
+          <p>将从备份文件中恢复数据，包含 ${(data.events||[]).length} 条记录、${(data.habits||[]).length} 个习惯、${(data.notes||[]).length} 条碎念、${(data.habitLogs||[]).length} 条打卡。<br><br><strong style="color:#EF4444">注意：当前数据将被完全替换！</strong></p>
+          <div class="cfm-btns">
+            <button class="btn-c" id="impCancel">取消</button>
+            <button class="btn-d" id="impConfirm" style="background:var(--ac)">确认恢复</button>
+          </div>
+        </div>`;
+        document.body.appendChild(o);
+        o.querySelector('#impCancel').onclick=()=>o.remove();
+        o.querySelector('#impConfirm').onclick=async()=>{
+          try{
+            await this.db.importAll(data);
+            await this.load();
+            this.rem.loadAll(this.events);
+            o.remove();
+            this.render();
+            this.toast('数据恢复成功！共 '+totalItems+' 条数据');
+            playSuccess();
+          }catch(err){
+            console.error('Import failed:',err);
+            o.remove();
+            this.toast('恢复失败，请重试');
+          }
+        };
+      }catch(err){
+        console.error('Parse failed:',err);
+        this.toast('文件解析失败，请确认是正确的备份文件');
+      }
+    };
+    input.click();
+  }
+
   // ===== Achievement =====
   showAchievementCard(){
     const o=document.createElement('div');
@@ -498,26 +591,35 @@ class App{
         </div>
       </div>
       ${totalH>0?`
-      <div class="habit-sec-title">今日习惯
-        <button data-goto="habits">管理 ${IC.edit}</button>
-      </div>
-      <div class="habit-grid">
-        ${todayHabits.map(h=>{
-          const done=this.isHabitDone(h.id);
-          const hc=HABIT_COLORS[h.colorIdx||0];
-          return `<div class="habit-card" data-hid="${h.id}">
-            <div class="habit-icon ${done?'done':''}" style="background:${hc.bg}">
-              <span style="font-size:26px">${h.emoji}</span>
-              <div class="habit-chk">${IC.check}</div>
-            </div>
-            <span class="h-name ${done?'done-t':''}">${esc(h.name)}</span>
-          </div>`;
-        }).join('')}
+      <div class="habit-section ${this.habitCollapsed?'collapsed':''}">
+        <div class="habit-sec-title" id="habitToggle">
+          <div class="habit-sec-left">今日习惯 <span class="habit-sec-badge">${doneCount}/${totalH}</span></div>
+          <div class="habit-sec-right">
+            <button data-goto="habits">管理 ${IC.edit}</button>
+            <span class="habit-sec-chevron">${IC.chevDown}</span>
+          </div>
+        </div>
+        <div class="habit-grid-wrap">
+          <div class="habit-grid">
+            ${todayHabits.map(h=>{
+              const done=this.isHabitDone(h.id);
+              const hc=HABIT_COLORS[h.colorIdx||0];
+              return `<div class="habit-card" data-hid="${h.id}">
+                <div class="habit-icon ${done?'done':''}" style="background:${hc.bg}">
+                  <span style="font-size:26px">${h.emoji}</span>
+                  <div class="habit-chk">${IC.check}</div>
+                </div>
+                <span class="h-name ${done?'done-t':''}">${esc(h.name)}</span>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
       </div>`:''}
       <div class="cat-scroll">
         ${[{id:'all',name:'全部',emoji:'🌟',color:'sky'},...this.categories].map(c=>{
           return `<button class="cat-chip ${this.activeCat===c.id?'active':''}" data-cat="${c.id}">${c.emoji||''} ${esc(c.name)}</button>`;
         }).join('')}
+        <button class="cat-chip cat-add-btn" id="homeCatAdd">${IC.plus}</button>
       </div>
       <div class="search-box">
         <div class="sbar" id="sbar">
@@ -549,7 +651,10 @@ class App{
       let lbl=(d.getMonth()+1)+'月'+d.getDate()+'日';
       if(d.toDateString()===n.toDateString())lbl='今天';
       else if(d.toDateString()===y.toDateString())lbl='昨天';
-      h+=`<div class="dg-title">${lbl}</div>`;
+      const isCollapsed=this.collapsedDates.has(k);
+      h+=`<div class="dg-group ${isCollapsed?'collapsed':''}" data-dgk="${k}">`;
+      h+=`<div class="dg-title" data-dgk="${k}"><span class="dg-lbl">${lbl}</span><span class="dg-cnt">${evts.length}条</span><span class="dg-chevron">${IC.chevDown}</span></div>`;
+      h+=`<div class="dg-body">`;
       for(const e of evts){
         const cat=this.catById(e.category);
         const col=cat?this.colorByName(cat.color):COLORS[0];
@@ -570,6 +675,7 @@ class App{
           <div class="cf"><span class="cdate">${fmtFull(e.createdAt)}</span><div class="cacts"><button class="cact btn-edit" data-id="${e.id}">${IC.edit}</button><button class="cact btn-del" data-id="${e.id}">${IC.trash}</button></div></div>
         </div>`;
       }
+      h+=`</div></div>`;
     }
     h+='</div>';
     return h;
@@ -946,6 +1052,28 @@ class App{
             </div>`;
           }).join('')}
         </div>`:''}
+
+        <!-- 数据管理 -->
+        <div class="sec-hdr"><div class="sec-title">数据管理</div><span class="sec-sub">备份 & 恢复</span></div>
+        <div class="backup-card">
+          <div class="backup-info">
+            <div class="backup-icon">🛡️</div>
+            <div class="backup-text">
+              <div class="backup-title">保护你的数据</div>
+              <div class="backup-desc">定期备份可防止数据丢失，换手机也能轻松恢复</div>
+            </div>
+          </div>
+          <div class="backup-btns">
+            <button class="backup-btn backup-export" id="backupExport">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              导出备份
+            </button>
+            <button class="backup-btn backup-import" id="backupImport">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              恢复数据
+            </button>
+          </div>
+        </div>
       </div>`;
   }
 
@@ -1284,6 +1412,30 @@ class App{
   }
 
   bindHome(){
+    // Habit section toggle (collapse/expand)
+    const habitToggle=document.getElementById('habitToggle');
+    if(habitToggle){
+      habitToggle.onclick=(e)=>{
+        // 如果点击的是"管理"按钮，不触发折叠
+        if(e.target.closest('[data-goto]'))return;
+        const section=habitToggle.closest('.habit-section');
+        const wrap=section.querySelector('.habit-grid-wrap');
+        if(section.classList.contains('collapsed')){
+          // 展开
+          wrap.style.height=wrap.scrollHeight+'px';
+          section.classList.remove('collapsed');
+          this.habitCollapsed=false;
+          setTimeout(()=>{wrap.style.height=''},300);
+        }else{
+          // 收起
+          wrap.style.height=wrap.scrollHeight+'px';
+          wrap.offsetHeight; // force reflow
+          wrap.style.height='0';
+          section.classList.add('collapsed');
+          this.habitCollapsed=true;
+        }
+      };
+    }
     // Habit cards - toggle
     document.querySelectorAll('.habit-card[data-hid]').forEach(c=>{
       c.onclick=()=>{
@@ -1307,6 +1459,11 @@ class App{
       sinput.onblur=()=>sbar.classList.remove('focused');
     }
     if(sclear)sclear.onclick=()=>{this.query='';sinput.value='';sclear.classList.remove('vis');this.refreshEvents()};
+    // Home add category button
+    const homeCatAdd=document.getElementById('homeCatAdd');
+    if(homeCatAdd)homeCatAdd.onclick=()=>{
+      this.showAddCatForm(null,()=>{this.render()});
+    };
     // Card actions
     this.bindCardActions();
   }
@@ -1335,6 +1492,26 @@ class App{
   bindCardActions(){
     document.querySelectorAll('.btn-edit').forEach(b=>{b.onclick=e=>{e.stopPropagation();const ev=this.events.find(x=>x.id===b.dataset.id);if(ev)this.showModal(ev)}});
     document.querySelectorAll('.btn-del').forEach(b=>{b.onclick=e=>{e.stopPropagation();this.confirmDel(b.dataset.id)}});
+    // Date group toggle (collapse/expand)
+    document.querySelectorAll('.dg-title[data-dgk]').forEach(t=>{
+      t.onclick=()=>{
+        const k=t.dataset.dgk;
+        const group=t.closest('.dg-group');
+        const body=group.querySelector('.dg-body');
+        if(group.classList.contains('collapsed')){
+          body.style.height=body.scrollHeight+'px';
+          group.classList.remove('collapsed');
+          this.collapsedDates.delete(k);
+          setTimeout(()=>{body.style.height=''},300);
+        }else{
+          body.style.height=body.scrollHeight+'px';
+          body.offsetHeight;
+          body.style.height='0';
+          group.classList.add('collapsed');
+          this.collapsedDates.add(k);
+        }
+      };
+    });
   }
 
   bindStatsPage(){
@@ -1437,6 +1614,12 @@ class App{
         }
       };
     });
+
+    // Backup & Restore buttons
+    const exportBtn=document.getElementById('backupExport');
+    if(exportBtn)exportBtn.onclick=()=>this.exportData();
+    const importBtn=document.getElementById('backupImport');
+    if(importBtn)importBtn.onclick=()=>this.importData();
   }
 
   bindHabitPage(){
